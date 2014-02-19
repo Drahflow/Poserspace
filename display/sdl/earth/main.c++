@@ -91,7 +91,7 @@ class TextInterpreter: public DataInterpreter {
     virtual void handleData(const std::vector<std::string> &line) {
       auto &lines = geo.lines;
 
-      lines.push_back(line[0]);
+      if(line[0] != "") lines.push_back(line[0]);
 
       while(lines.size() > MAXLINES) {
         std::copy(lines.begin() + 1, lines.end(), lines.begin());
