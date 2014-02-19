@@ -1,5 +1,6 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
+#include <SDL2/SDL_ttf.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <string.h>
@@ -20,14 +21,19 @@
 #define WIDTH 1024
 #define HEIGHT 768
 
-struct GeoData {
-  SDL_Surface *earth;
-
-  double targetLat, targetLon;
-  double currentLat, currentLon;
+struct Line {
+  TTF_Font *font;
+  float x, y, w, h;
+  std::string content;
+  SDL_Surface *surface;
+  
+  struct {
+    int r, g, b;
+  } col;
 };
 
-GeoData geo;
+std::vector<Line> lines;
+std::vector<TTF_Font *> fonts;
 
 int prepareSocket() {
   const int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -65,16 +71,37 @@ class DataInterpreter {
     virtual void handleData(const std::vector<std::string> &) = 0;
 };
 
-class GeoInterpreter: public DataInterpreter {
-  public:
-    virtual void handleData(const std::vector<std::string> &data) {
-      std::cerr << "Geo: " << data[0] << "," << data[1] << std::endl;
-    }
-};
+int maxsize(int lineCount) {
+  if(lineCount < 20) return 28;
+  if(lineCount < 25) return 24;
+  if(lineCount < 30) return 20;
+  if(lineCount < 50) return 16;
+  if(lineCount < 80) return 12;
+  if(lineCount < 110) return 8;
+  if(lineCount < 200) return 4;
+  return 1;
+}
 
 class TextInterpreter: public DataInterpreter {
   public:
-    virtual void handleData(const std::vector<std::string> &) { }
+    virtual void handleData(const std::vector<std::string> &line) {
+      if(line[0] == "") return;
+
+      Line l;
+      l.surface = nullptr;
+      // l.h = rand() % 28 + 4;
+      l.h = rand() % maxsize(lines.size()) + 4;
+      l.font = fonts[l.h];
+      l.x = WIDTH;
+      l.y = rand() % HEIGHT;
+      l.w = WIDTH * 2;
+      l.col.r = 0;
+      // l.col.g = 64 + rand() % 191;
+      l.col.g = 64 + 191 * l.h / 32 - (rand() % 32);
+      l.col.b = 0;
+      l.content = line[0];
+      lines.push_back(l);
+    }
 };
 
 class ConnectionState {
@@ -96,7 +123,6 @@ class ConnectionState {
     void handleHeader(const std::string &header, const std::string &value) {
       std::cerr << "Header: " << header << " => " << value << std::endl;
       if(header == "Content-type") {
-        if(value == "x-poserspace/geo") interpreter = std::make_shared<GeoInterpreter>();
         if(value == "x-poserspace/text") interpreter = std::make_shared<TextInterpreter>();
       }
     }
@@ -123,9 +149,6 @@ class ConnectionState {
           std::vector<std::string> values;
           boost::algorithm::split(values, line, [](char c) { return c == '\t'; });
           interpreter->handleData(values);
-
-          geo.targetLat = atof(values[0].c_str());
-          geo.targetLon = atof(values[1].c_str());
           break;
       }
     }
@@ -182,64 +205,64 @@ uint64_t now() {
   return static_cast<uint64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
 }
 
-double lon2X(double lon) {
-  return (lon + 180) / 360 * WIDTH;
-}
-
-double lat2Y(double lat) {
-  return HEIGHT / 2 + HEIGHT / 1.7 / M_PI * (log(tan(M_PI / 4 + lat / 180 * M_PI / 2)));
-}
-
 void renderFrame(SDL_Surface *screen, SDL_Renderer *renderer) {
-  SDL_BlitScaled(geo.earth, nullptr, screen, nullptr);
+  {
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    std::vector<Line> living;
 
-  const double x = lon2X(geo.currentLon);
-  const double y = lat2Y(geo.currentLat);
+    for(auto &l: lines) {
+      if(!l.surface) {
+        l.surface = TTF_RenderUTF8_Blended(l.font, l.content.c_str(), SDL_Color{
+            static_cast<uint8_t>(l.col.r),
+            static_cast<uint8_t>(l.col.g),
+            static_cast<uint8_t>(l.col.b),
+            128});
+        if(!l.surface) throw "TTF_RenderUTF8_Solid failed";
+      }
 
-  geo.currentLat = (geo.currentLat * 0.9 + geo.targetLat * 0.1);
-  geo.currentLon = (geo.currentLon * 0.9 + geo.targetLon * 0.1);
+      if(l.surface->w > 0 && l.surface->h > 0) {
+        SDL_Rect r{static_cast<int>(l.x), static_cast<int>(l.y), l.surface->w, l.surface->h};
+        SDL_BlitSurface(l.surface, nullptr, screen, &r);
+      }
 
-  const double dLat = geo.currentLat - geo.targetLat;
-  const double dLon = geo.currentLon - geo.targetLon;
+      l.w = l.surface->w;
 
-  if(dLat * dLat + dLon * dLon < 1 && (now() / 100000) % 2) {
-    SDL_SetRenderDrawColor(renderer, 255, 255, 0, 255);
-  } else {
-    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+      // l.x -= 0.1 + l.h / 4.0;
+      // l.x -= 0.1 + l.w / 64.0;
+      float dx = 0.1 + l.w / 64.0;
+      while(dx > 20) dx /= 10;
+      l.x -= dx;
+
+      if(l.x > -l.w) {
+        living.push_back(l);
+      } else {
+        SDL_FreeSurface(l.surface);
+      }
+    }
+
+    lines = living;
   }
 
-  SDL_RenderDrawLine(renderer, 0, y, WIDTH, y);
-  SDL_RenderDrawLine(renderer, x, 0, x, HEIGHT);
-
   SDL_RenderPresent(renderer);
-}
-
-SDL_Surface *loadEarth() {
-  SDL_Surface *const img = IMG_Load("earth.png");
-  SDL_Surface *const earth = SDL_CreateRGBSurface(0, WIDTH, HEIGHT, 32, 0xff, 0xff00, 0xff0000, 0xff000000);
-
-  SDL_BlitScaled(img, nullptr, earth, nullptr);
-  SDL_FreeSurface(img);
-  return earth;
 }
 
 int main(int, char **) {
   try {
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_NOPARACHUTE)) throw "SDL init failed";
+    if(TTF_Init() < 0) throw "TTF init failed";
+
     SDL_Window *const window = SDL_CreateWindow("-[ data ]-",
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
         WIDTH, HEIGHT, 0);
     SDL_Surface *const screen = SDL_GetWindowSurface(window);
     SDL_Renderer *const renderer = SDL_CreateSoftwareRenderer(screen);
 
-    // geo.earth = IMG_Load("earth.jpg");
-    geo.earth = loadEarth();
-
-    geo.currentLat = geo.currentLon = 0.0;
-    geo.targetLat = geo.targetLon = 0.0;
-
-    geo.targetLat = -52.26471465026548;
-    geo.targetLon = 10.515537294323199;
+    fonts.push_back(nullptr);
+    for(int i = 1; i < 32; ++i) {
+      fonts.push_back(TTF_OpenFont("8bitoperator.ttf", i));
+      if(!fonts.back()) throw "TTF_OpenFont failed";
+    }
 
     const int serverSocket = prepareSocket();
     const int poll = prepareEpoll(serverSocket);
@@ -275,10 +298,12 @@ int main(int, char **) {
   } catch (const std::string &err) {
     std::cerr << err << std::endl;
     std::cerr << SDL_GetError() << std::endl;
+    std::cerr << TTF_GetError() << std::endl;
     std::cerr << strerror(errno) << std::endl;
   } catch (const char *&err) {
     std::cerr << err << std::endl;
     std::cerr << SDL_GetError() << std::endl;
+    std::cerr << TTF_GetError() << std::endl;
     std::cerr << strerror(errno) << std::endl;
     return 1;
   }
