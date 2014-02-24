@@ -18,8 +18,8 @@
 #define POSERSPACE_PORT 9050
 #define EVENT_COUNT 8
 #define FRAMEDELAY 25000
-#define WIDTH 1024
-#define HEIGHT 768
+#define WIDTH 1920
+#define HEIGHT 1080
 
 struct Line {
   TTF_Font *font;
@@ -73,13 +73,13 @@ class DataInterpreter {
 
 int maxsize(int lineCount) {
   if(lineCount < 20) return 28;
-  if(lineCount < 25) return 24;
-  if(lineCount < 30) return 20;
-  if(lineCount < 50) return 16;
-  if(lineCount < 80) return 12;
-  if(lineCount < 110) return 8;
-  if(lineCount < 200) return 4;
-  return 1;
+  if(lineCount < 25) return (rand() % 10)? 24: 28;
+  if(lineCount < 30) return (rand() % 15)? 20: 28;
+  if(lineCount < 50) return (rand() % 20)? 16: 24;
+  if(lineCount < 80) return (rand() % 40)? 12: 24;
+  if(lineCount < 110) return (rand() % 50)? 8: 24;
+  if(lineCount < 200) return (rand() % 100)? 4: 24;
+  return (rand() % lineCount)? 1: 24;
 }
 
 class TextInterpreter: public DataInterpreter {
@@ -271,6 +271,13 @@ int main(int, char **) {
 
     while(running) {
       const auto t = now();
+
+      SDL_Event event;
+      while (SDL_PollEvent(&event)) {
+        if(event.type == SDL_QUIT) {
+          running = false;
+        }
+      }
 
       if(nextFrameAt < t) {
         renderFrame(screen, renderer);
